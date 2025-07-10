@@ -1,10 +1,33 @@
 unit WindowInfoList;
 
+{
+  Unit Name   : WindowInfoList
+  Description: 現在のデスクトップに存在するウィンドウの一覧を取得するクラスを提供します。
+               各ウィンドウのハンドル、タイトル、クラス名、プロセスIDなどを取得可能です。
+
+  Author     : vramwiz
+  Created    : 2025-07-10
+  Updated    : 2025-07-10
+
+  Usage      :
+    - TWindowInfoList.Create によりウィンドウ一覧を収集
+    - Items プロパティから各ウィンドウの情報（ハンドル、タイトルなど）にアクセス可能
+    - フィルタ処理や非表示ウィンドウの除外など、条件に応じた拡張も可能
+
+  Dependencies:
+    - Windows, Messages, TlHelp32, PsAPI など（Win32 API 使用）
+
+  Notes:
+    - HWNDごとの情報を構造体またはレコード単位で保持
+    - マルチモニタ／仮想デスクトップなどの特殊環境は未対応（必要に応じて拡張可）
+
+}
+
 interface
 
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
-  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls,ComCtrls,StringListEx,System.Generics.Collections,
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls,ComCtrls,System.Generics.Collections,
   PsAPI,Winapi.ShellAPI, Winapi.ActiveX, Winapi.ShlObj, Winapi.CommCtrl, Vcl.ImgList;
 
 type
@@ -119,40 +142,34 @@ begin
   end;
 end;
 
+
 //-----------------------------------------------------------------------------
-//  SHGetImageList関数を使用してシステムのイメージリストを取得
-//  取得するアイコンのサイズを引数で指定する
-//  定数名はShellAPI.pasに定義されている
-//
-//  Delphi XEにはSHGetImageList関数が実装されているが，32ビットのEXEを64ビット
-//  Windowsで実行すると，「特権命令」違反が発生する
-//  本コードのようにLoadLivraryでDLLをロードし関数のアドレスを取得して実行する
-//  と例外が発生しない
-//  64ビットのEXEで実行すれば「特恵命令」は発生しない
+// Windowsのシステムイメージリスト（アイコン一覧）を取得する関数
 //-----------------------------------------------------------------------------
 function GetSystemImageList(ASHILValue: Cardinal): HIMAGELIST;
 type
-  TSHGetImageList = function(iImageList: integer;
-                             const riid: TGUID;
-                             var ppv: Pointer): HRESULT; stdcall;
+  TGetImageList = function(iImageList: Integer; const riid: TGUID; var ppv: Pointer): HRESULT; stdcall;
 const
-  IID_IImageList: TGUID= '{46EB5926-582E-4017-9FDF-E8998DAA0950}';
+  IID_IImageList: TGUID = '{46EB5926-582E-4017-9FDF-E8998DAA0950}';
 var
-  LDllHandle      : THandle;
-  LSHGetImageList : TSHGetImageList;
+  aHandle      : THandle;
+  GetImageList : TGetImageList;
+  P               : Pointer;
 begin
   Result := 0;
+  P := nil;
 
-  LDllHandle := LoadLibrary('Shell32.dll');
-  if LDllHandle <> 0 then begin
-    try
-      LSHGetImageList := GetProcAddress(LDllHandle, 'SHGetImageList');
-      if @LSHGetImageList <> nil then begin
-        LSHGetImageList(ASHILValue, IID_IImageList, Pointer(Result));
-      end;
-    finally
-      FreeLibrary(LDllHandle);
+  aHandle := LoadLibrary('Shell32.dll');
+  if aHandle <> 0 then
+  try
+    @GetImageList := GetProcAddress(aHandle, 'SHGetImageList');
+    if Assigned(GetImageList) then
+    begin
+      if Succeeded(GetImageList(ASHILValue, IID_IImageList, P)) then
+        Result := HIMAGELIST(P);
     end;
+  finally
+    FreeLibrary(aHandle);
   end;
 end;
 
@@ -208,7 +225,9 @@ begin
 end;
 
 
+//-----------------------------------------------------------------------------
 // アプリのリストを取得するコールバック関数
+//-----------------------------------------------------------------------------
 function EnumWindowProc(hWnd: HWND; lParam: LPARAM): BOOL; stdcall;
 var
   PID: DWORD;
@@ -226,7 +245,9 @@ begin
 end;
 
 
+//-----------------------------------------------------------------------------
 // 生成とウインドウハンドルのチェックを同時に行う
+//-----------------------------------------------------------------------------
 class function TWindowInfo.CreateFromWindow(hWnd: HWND): TWindowInfo;
 var
   hProcess: THandle;
@@ -256,7 +277,9 @@ begin
 
 end;
 
+//-----------------------------------------------------------------------------
 // True:UWPアプリ  本来のやり方では判定出来ないので強制判定
+//-----------------------------------------------------------------------------
 function TWindowInfo.GetIsUWP: Boolean;
 begin
   Result := SameText(ProcessName, 'ApplicationFrameHost.exe') or
@@ -265,7 +288,9 @@ begin
 end;
 
 
+//-----------------------------------------------------------------------------
 // アイコンを取得 引数のIconは生成済みのものを参照させる
+//-----------------------------------------------------------------------------
 procedure TWindowInfo.GetProcessIcon(Icon: TIcon);
 begin
   if IsUWP then begin
@@ -276,7 +301,9 @@ begin
   end;
 end;
 
+//-----------------------------------------------------------------------------
 // アイコンを取得（UWP以外）
+//-----------------------------------------------------------------------------
 procedure TWindowInfo.GetProcessIconNonUWP(Icon: TIcon);
 var
   i : Integer;
@@ -298,7 +325,9 @@ begin
   Icon.Handle := ImageList_GetIcon(list, i, ILD_NORMAL); // イメージリストから指定インデックスのアイコンのハンドルを取得
 end;
 
+//-----------------------------------------------------------------------------
 // アイコンを取得（UWP専用）
+//-----------------------------------------------------------------------------
 procedure TWindowInfo.GetProcessIconUWP(Icon: TIcon);
 var
   LITemIDPath : PItemIDList;
@@ -341,7 +370,9 @@ begin
   end;
 end;
 
+//-----------------------------------------------------------------------------
 // リストから該当するプロセスIDのインデックス値を取得
+//-----------------------------------------------------------------------------
 function TWindowInfoList.IndexOfProcessID(PID: DWORD): Integer;
 var
   i: Integer;
@@ -376,7 +407,9 @@ begin
 end;
 
 
+//-----------------------------------------------------------------------------
 // 通常のトップレベルウインドウかどうかを判定する True:トップレベルウインドウ
+//-----------------------------------------------------------------------------
 function TWindowInfoList.IsDisplayableWindow(hWnd: HWND): Boolean;
 var
   exStyle: DWORD;
@@ -389,7 +422,9 @@ begin
   end;
 end;
 
+//-----------------------------------------------------------------------------
 // リストに表示すべきアプリか判定
+//-----------------------------------------------------------------------------
 function TWindowInfoList.IsSelfProcess(PID: DWORD): Boolean;
 begin
   Result := PID = GetCurrentProcessId;
@@ -418,7 +453,9 @@ begin
   result := True;
 end;
 
- // システムプロセスかどうかの判断
+//-----------------------------------------------------------------------------
+// システムプロセスかどうかの判断
+//-----------------------------------------------------------------------------
 function TWindowInfoList.IsSystemShellWindow(hWnd: HWND): Boolean;
 const
   CLASS_BRIDGE  = 'Windows.UI.Composition.DesktopWindowContentBridge';
@@ -433,7 +470,9 @@ begin
   result := True;
 end;
 
+//-----------------------------------------------------------------------------
 // UWPかどうかの判定
+//-----------------------------------------------------------------------------
 function TWindowInfoList.IsSystemUWP(hWnd: HWND): Boolean;
 const
   UWP_FRAMEWND  = 'ApplicationFrameWindow';
@@ -441,7 +480,9 @@ begin
   result := GetWindowClassName(hWnd) = UWP_FRAMEWND;
 end;
 
+//-----------------------------------------------------------------------------
 // 有効なアプリのリストを作成
+//-----------------------------------------------------------------------------
 procedure TWindowInfoList.LoadActiveWindows(const Options: TLoadWindowsOptions);
 begin
   FOptions := Options;
